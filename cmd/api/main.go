@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"coupon-import/internal/handler"
 	"coupon-import/internal/service"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/glebarez/sqlite"
 )
@@ -42,14 +44,24 @@ func main() {
 
 	r := gin.Default()
 
-	// serve OpenAPI spec
-	r.GET("/openapi.yaml", func(c *gin.Context) {
-		c.File("openapi.yaml")
-	})
+	// enable CORS so the Swagger UI (served from the same host) can call the API
+	r.Use(cors.Default())
 
-	// serve Swagger UI at /docs
+	// compute project-relative paths based on this source file location so
+	// files are served correctly regardless of the current working dir.
+	_, thisFile, _, _ := runtime.Caller(0)
+	srcDir := filepath.Dir(thisFile) // cmd/api
+	projectRoot := filepath.Clean(filepath.Join(srcDir, "..", ".."))
+	specPath := filepath.Join(projectRoot, "openapi.yaml")
+	swaggerPath := filepath.Join(projectRoot, "docs", "swagger.html")
+
+	// serve OpenAPI spec
+	r.StaticFile("/openapi.yaml", specPath)
+
+	// serve Swagger UI static file and redirect /docs -> /docs/swagger.html
+	r.StaticFile("/docs/swagger.html", swaggerPath)
 	r.GET("/docs", func(c *gin.Context) {
-		c.File("docs/swagger.html")
+		c.Redirect(http.StatusFound, "/docs/swagger.html")
 	})
 
 	api := r.Group("/api/v1")
