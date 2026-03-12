@@ -1,0 +1,348 @@
+openapi: 3.0.3
+info:
+  title: Coupon Import API
+  version: 1.0.0
+  description: |
+    Async bulk coupon import API. Upload CSVs, track import jobs, download failures,
+    and retry failed records. This OpenAPI document covers import-related APIs
+    and additional coupon endpoints used by the system.
+
+servers:
+  - url: http://localhost:8080/api/v1
+
+paths:
+  /imports:
+    post:
+      summary: Initiate CSV import
+      description: Upload a CSV file containing coupon codes. Returns a job id and starts async processing.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+                - file
+      responses:
+        '202':
+          description: Import accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /imports/{id}:
+    get:
+      summary: Get import job status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Import job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportJobResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /imports/{id}/errors:
+    get:
+      summary: List failed records for an import
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json,csv]
+            default: json
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Error records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  import_job_id:
+                    type: string
+                  total_errors:
+                    type: integer
+                  errors:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ImportError'
+  /imports/{id}/retry:
+    post:
+      summary: Retry failed records
+      description: Create a new import job that reprocesses failed records from the original job.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Retry job created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  import_job_id:
+                    type: string
+                  original_job_id:
+                    type: string
+                  status:
+                    type: string
+
+  /imports:
+    get:
+      summary: List import jobs
+      description: Paginated list of import jobs
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of import jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imports:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ImportJob'
+
+  /codes/{code}/validate:
+    get:
+      summary: Validate coupon code for checkout
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: cart_total
+          in: query
+          required: true
+          schema:
+            type: number
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  is_valid:
+                    type: boolean
+                  calculated_discount:
+                    type: number
+                  final_price:
+                    type: number
+  /codes/{code}/apply:
+    post:
+      summary: Record coupon usage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                order_id:
+                  type: string
+                user_id:
+                  type: string
+                cart_total:
+                  type: number
+                discount_applied:
+                  type: number
+      responses:
+        '200':
+          description: Usage recorded
+
+  /codes/analytics:
+    get:
+      summary: Coupon analytics
+      parameters:
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: group_by
+          in: query
+          schema:
+            type: string
+            enum: [day,week,month]
+      responses:
+        '200':
+          description: Analytics results
+
+components:
+  schemas:
+    ImportJob:
+      type: object
+      properties:
+        id:
+          type: string
+        file_name:
+          type: string
+        status:
+          type: string
+        total_rows:
+          type: integer
+        success_count:
+          type: integer
+        failure_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    ImportJobResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        file_name:
+          type: string
+        status:
+          type: string
+        progress:
+          type: object
+          properties:
+            total_rows:
+              type: integer
+            processed_rows:
+              type: integer
+            success_count:
+              type: integer
+            failure_count:
+              type: integer
+            percentage:
+              type: number
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    ImportAccepted:
+      type: object
+      properties:
+        import_job_id:
+          type: string
+        file_name:
+          type: string
+        status:
+          type: string
+
+    PromotionCode:
+      type: object
+      properties:
+        id:
+          type: string
+        code:
+          type: string
+        discount_type:
+          type: string
+        discount_value:
+          type: number
+        expires_at:
+          type: string
+          format: date-time
+        max_uses:
+          type: integer
+
+    ImportError:
+      type: object
+      properties:
+        id:
+          type: string
+        import_job_id:
+          type: string
+        row_number:
+          type: integer
+        raw_data:
+          type: string
+        error_message:
+          type: string
+
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  
