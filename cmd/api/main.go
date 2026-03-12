@@ -28,6 +28,27 @@ func main() {
 		if err != nil {
 			log.Fatalf("open db: %v", err)
 		}
+
+		// sqlite driver works best with a single writer connection; limit open
+		// connections to avoid "database is locked" under contention.
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+		// Configure SQLite for better concurrency: enable WAL and set busy timeout
+		if _, err := db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
+			log.Printf("warning: set journal_mode WAL: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA busy_timeout = 5000;"); err != nil {
+			log.Printf("warning: set busy_timeout: %v", err)
+		}
+
+		// recommended SQLite pragmas: use WAL to allow concurrent reads during writes,
+		// and set a busy timeout so concurrent writers wait instead of failing immediately.
+		if _, err := db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
+			log.Printf("warning: set journal_mode WAL: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA busy_timeout = 5000;"); err != nil {
+			log.Printf("warning: set busy_timeout: %v", err)
+		}
 		// run migrations
 		migrPath := filepath.Join("migrations", "001_init.sql")
 		if b, err := os.ReadFile(migrPath); err == nil {

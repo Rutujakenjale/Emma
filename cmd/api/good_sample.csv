@@ -1,0 +1,6 @@
+code,discount_type,discount_value,expires_at,max_uses
+SAVE10,percentage,10,2026-12-31T23:59:59Z,100
+WELCOME,fixed,5,2027-01-01T00:00:00Z,500
+SPRING25,percentage,25,2026-05-31T23:59:59Z,100
+BLACKFRIDAY,fixed,100,2026-11-27T23:59:59Z,1
+HOLIDAY,percentage,15,2026-12-25T23:59:59Z,1000
