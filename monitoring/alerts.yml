@@ -1,0 +1,29 @@
+groups:
+  - name: coupon-import.alerts
+    rules:
+      - alert: HighJobFailureRate
+        expr: rate(coupon_import_jobs_failed_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High import job failure rate"
+          description: "More than 0.1 failed jobs/sec over 5m."
+
+      - alert: QueueSaturated
+        expr: coupon_import_queue_length > 80
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Job queue saturated"
+          description: "Queue length above 80 jobs."
+
+      - alert: WorkerCountLow
+        expr: coupon_import_worker_count == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No active workers"
+          description: "Worker count is zero; processing halted."

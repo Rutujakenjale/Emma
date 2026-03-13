@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+      - name: Install dependencies
+        run: go mod download
+      - name: Run vet
+        run: go vet ./...
+      - name: Run tests
+        run: go test -v ./...
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Run govulncheck
+        run: govulncheck ./...
+      - name: Start server for health checks
+        run: |
+          export PORT=9091
+          nohup sh -c "go run ./cmd/api > server.log 2>&1" &
+          # wait for server up
+          for i in {1..10}; do
+            if curl -sS http://localhost:9091/healthz >/dev/null; then break; fi; sleep 1;
+          done
+      - name: Run health checks
+        run: |
+          curl -f http://localhost:9091/healthz
+          curl -f http://localhost:9091/readyz
+          curl -f http://localhost:9091/metrics
+      - name: Stop server
+        run: pkill -f "go run ./cmd/api" || true

@@ -17,7 +17,7 @@ import (
 
 func TestCreateImportHandler(t *testing.T) {
 	svc := service.NewInMemoryImportService()
-	h := NewImportHandler(svc)
+	h := NewImportHandler(svc, nil)
 
 	// create sample CSV file
 	tmp := filepath.Join(os.TempDir(), "handler_test.csv")

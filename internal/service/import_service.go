@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"coupon-import/internal/metrics"
 	"coupon-import/internal/model"
 
 	"github.com/google/uuid"
@@ -38,8 +39,11 @@ func NewImportService(db *sql.DB) *ImportService {
 func (s *ImportService) CreateJob(fileName string) (*model.ImportJob, error) {
 	id := uuid.New().String()
 	now := time.Now().UTC()
+	start := time.Now()
 	_, err := s.db.Exec(`INSERT INTO import_jobs(id, file_name, status, created_at) VALUES (?, ?, 'pending', ?)`, id, fileName, now.Format(time.RFC3339))
+	metrics.DBQueryDuration.Observe(time.Since(start).Seconds())
 	if err != nil {
+		metrics.DBErrors.Inc()
 		return nil, err
 	}
 	return &model.ImportJob{ID: id, FileName: fileName, Status: "pending", CreatedAt: now}, nil
@@ -69,7 +73,12 @@ func (s *ImportService) GetJob(id string) (*model.ImportJob, error) {
 }
 
 func (s *ImportService) recordError(jobID string, rowNum int, raw string, msg string) error {
+	start := time.Now()
 	_, err := s.db.Exec(`INSERT INTO import_errors(id, import_job_id, row_number, raw_data, error_message) VALUES(?,?,?,?,?)`, uuid.New().String(), jobID, rowNum, raw, msg)
+	metrics.DBQueryDuration.Observe(time.Since(start).Seconds())
+	if err != nil {
+		metrics.DBErrors.Inc()
+	}
 	return err
 }
 
@@ -106,9 +115,15 @@ func (s *ImportService) ProcessFile(jobID string, path string) error {
 	rowNum := 1
 	var success, failure, processed int
 
-	tx, _ := s.db.Begin()
-	stmt, _ := tx.Prepare(`INSERT INTO promotion_codes(id,code,discount_type,discount_value,expires_at,max_uses,created_at) VALUES(?,?,?,?,?,?,?)`)
-	defer stmt.Close()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO promotion_codes(id,code,discount_type,discount_value,expires_at,max_uses,created_at) VALUES(?,?,?,?,?,?,?)`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
 
 	for {
 		rec, err := reader.Read()
@@ -130,9 +145,19 @@ func (s *ImportService) ProcessFile(jobID string, path string) error {
 		}
 		code := strings.TrimSpace(rec[0])
 		dtype := strings.TrimSpace(rec[1])
-		dval, _ := strconv.ParseFloat(strings.TrimSpace(rec[2]), 64)
+		dval, err := strconv.ParseFloat(strings.TrimSpace(rec[2]), 64)
+		if err != nil {
+			_ = s.recordError(jobID, rowNum, strings.Join(rec, ","), "invalid discount value")
+			failure++
+			continue
+		}
 		expires := strings.TrimSpace(rec[3])
-		maxUses, _ := strconv.Atoi(strings.TrimSpace(rec[4]))
+		maxUses, err := strconv.Atoi(strings.TrimSpace(rec[4]))
+		if err != nil {
+			_ = s.recordError(jobID, rowNum, strings.Join(rec, ","), "invalid max_uses")
+			failure++
+			continue
+		}
 
 		if code == "" {
 			_ = s.recordError(jobID, rowNum, strings.Join(rec, ","), "code required")
@@ -159,6 +184,7 @@ func (s *ImportService) ProcessFile(jobID string, path string) error {
 			// flush
 			if err := s.flushBatch(tx, stmt, batch, jobID, &success, &failure); err != nil {
 				tx.Rollback()
+				stmt.Close()
 				return err
 			}
 			batch = batch[:0]
@@ -166,19 +192,42 @@ func (s *ImportService) ProcessFile(jobID string, path string) error {
 		if processed%1000 == 0 {
 			_ = s.updateProgress(jobID, 1000, success, failure)
 			// commit intermediate
-			tx.Commit()
-			tx, _ = s.db.Begin()
-			stmt, _ = tx.Prepare(`INSERT INTO promotion_codes(id,code,discount_type,discount_value,expires_at,max_uses,created_at) VALUES(?,?,?,?,?,?,?)`)
+			if err := tx.Commit(); err != nil {
+				tx.Rollback()
+				stmt.Close()
+				return err
+			}
+			// close previous stmt before creating new one
+			if err := stmt.Close(); err != nil {
+				return err
+			}
+			tx, err = s.db.Begin()
+			if err != nil {
+				return err
+			}
+			stmt, err = tx.Prepare(`INSERT INTO promotion_codes(id,code,discount_type,discount_value,expires_at,max_uses,created_at) VALUES(?,?,?,?,?,?,?)`)
+			if err != nil {
+				tx.Rollback()
+				return err
+			}
 		}
 	}
 
 	if len(batch) > 0 {
 		if err := s.flushBatch(tx, stmt, batch, jobID, &success, &failure); err != nil {
 			tx.Rollback()
+			stmt.Close()
 			return err
 		}
 	}
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		stmt.Close()
+		return err
+	}
+	if err := stmt.Close(); err != nil {
+		return err
+	}
 
 	// final update
 	// update totals
@@ -208,10 +257,10 @@ func (s *ImportService) flushBatch(tx *sql.Tx, stmt *sql.Stmt, batch [][]interfa
 			} else {
 				_ = s.recordError(jobID, 0, fmt.Sprint(row), err.Error())
 			}
-			*failure++
+			(*failure)++
 			continue
 		}
-		*success++
+		(*success)++
 	}
 	return nil
 }
@@ -292,9 +341,19 @@ func (s *ImportService) RetryFailed(originalJobID, newJobID string) error {
 		}
 		code := strings.TrimSpace(rec[0])
 		dtype := strings.TrimSpace(rec[1])
-		dval, _ := strconv.ParseFloat(strings.TrimSpace(rec[2]), 64)
+		dval, err := strconv.ParseFloat(strings.TrimSpace(rec[2]), 64)
+		if err != nil {
+			_ = s.recordError(newJobID, rowNum, raw, "invalid discount value")
+			failure++
+			continue
+		}
 		expires := strings.TrimSpace(rec[3])
-		maxUses, _ := strconv.Atoi(strings.TrimSpace(rec[4]))
+		maxUses, err := strconv.Atoi(strings.TrimSpace(rec[4]))
+		if err != nil {
+			_ = s.recordError(newJobID, rowNum, raw, "invalid max_uses")
+			failure++
+			continue
+		}
 
 		if code == "" {
 			_ = s.recordError(newJobID, rowNum, raw, "code required")

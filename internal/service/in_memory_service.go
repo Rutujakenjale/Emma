@@ -104,9 +104,17 @@ func (s *InMemoryImportService) ProcessFile(jobID string, path string) error {
 		}
 		code := strings.TrimSpace(rec[0])
 		dtype := strings.TrimSpace(rec[1])
-		_, _ = strconv.ParseFloat(strings.TrimSpace(rec[2]), 64)
+		if _, err := strconv.ParseFloat(strings.TrimSpace(rec[2]), 64); err != nil {
+			s.recordError(jobID, rowNum, strings.Join(rec, ","), "invalid discount value")
+			failure++
+			continue
+		}
 		expires := strings.TrimSpace(rec[3])
-		_, _ = strconv.Atoi(strings.TrimSpace(rec[4]))
+		if _, err := strconv.Atoi(strings.TrimSpace(rec[4])); err != nil {
+			s.recordError(jobID, rowNum, strings.Join(rec, ","), "invalid max_uses")
+			failure++
+			continue
+		}
 
 		if code == "" {
 			s.recordError(jobID, rowNum, strings.Join(rec, ","), "code required")
@@ -194,7 +202,18 @@ func (s *InMemoryImportService) RetryFailed(originalJobID, newJobID string) erro
 		}
 		code := strings.TrimSpace(rec[0])
 		dtype := strings.TrimSpace(rec[1])
+		// validate numeric fields when retrying
+		if _, err := strconv.ParseFloat(strings.TrimSpace(rec[2]), 64); err != nil {
+			s.recordError(newJobID, e.RowNumber, e.RawData, "invalid discount value")
+			failure++
+			continue
+		}
 		expires := strings.TrimSpace(rec[3])
+		if _, err := strconv.Atoi(strings.TrimSpace(rec[4])); err != nil {
+			s.recordError(newJobID, e.RowNumber, e.RawData, "invalid max_uses")
+			failure++
+			continue
+		}
 
 		if code == "" || (dtype != "percentage" && dtype != "fixed") {
 			s.recordError(newJobID, e.RowNumber, e.RawData, "validation failed")

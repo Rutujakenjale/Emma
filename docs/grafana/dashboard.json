@@ -1,0 +1,27 @@
+{
+  "annotations": {"list": []},
+  "panels": [
+    {
+      "type": "row",
+      "title": "Import Service Overview"
+    },
+    {
+      "type": "stat",
+      "title": "Queue Length",
+      "targets": [{"expr": "coupon_import_queue_length"}]
+    },
+    {
+      "type": "stat",
+      "title": "Jobs Accepted",
+      "targets": [{"expr": "increase(coupon_import_jobs_accepted_total[1h])"}]
+    },
+    {
+      "type": "stat",
+      "title": "Jobs Failed (1h)",
+      "targets": [{"expr": "increase(coupon_import_jobs_failed_total[1h])"}]
+    }
+  ],
+  "schemaVersion": 16,
+  "title": "Coupon Import Dashboard",
+  "version": 1
+}
