@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"coupon-import/internal/logging"
 	"coupon-import/internal/model"
 
 	"github.com/google/uuid"
@@ -38,14 +38,18 @@ func NewImportService(db *sql.DB) *ImportService {
 func (s *ImportService) CreateJob(fileName string) (*model.ImportJob, error) {
 	id := uuid.New().String()
 	now := time.Now().UTC()
+	logging.Debugf("CreateJob: inserting job id=%s file=%s", id, fileName)
 	_, err := s.db.Exec(`INSERT INTO import_jobs(id, file_name, status, created_at) VALUES (?, ?, 'pending', ?)`, id, fileName, now.Format(time.RFC3339))
 	if err != nil {
+		logging.Errorf("CreateJob: insert failed id=%s err=%v", id, err)
 		return nil, err
 	}
+	logging.Debugf("CreateJob: inserted job id=%s", id)
 	return &model.ImportJob{ID: id, FileName: fileName, Status: "pending", CreatedAt: now}, nil
 }
 
 func (s *ImportService) GetJob(id string) (*model.ImportJob, error) {
+	logging.Debugf("GetJob: querying id=%s", id)
 	row := s.db.QueryRow(`SELECT id,file_name,status,total_rows,processed_rows,success_count,failure_count,created_at,started_at,completed_at FROM import_jobs WHERE id = ?`, id)
 	var j model.ImportJob
 	var createdAt, startedAt, completedAt sql.NullString
@@ -69,12 +73,20 @@ func (s *ImportService) GetJob(id string) (*model.ImportJob, error) {
 }
 
 func (s *ImportService) recordError(jobID string, rowNum int, raw string, msg string) error {
+	logging.Debugf("recordError: job=%s row=%d msg=%s", jobID, rowNum, msg)
 	_, err := s.db.Exec(`INSERT INTO import_errors(id, import_job_id, row_number, raw_data, error_message) VALUES(?,?,?,?,?)`, uuid.New().String(), jobID, rowNum, raw, msg)
+	if err != nil {
+		logging.Errorf("recordError: insert failed job=%s row=%d err=%v", jobID, rowNum, err)
+	}
 	return err
 }
 
 func (s *ImportService) updateProgress(jobID string, processed, success, failure int) error {
+	logging.Debugf("updateProgress: job=%s processed=+%d success=+%d failure=+%d", jobID, processed, success, failure)
 	_, err := s.db.Exec(`UPDATE import_jobs SET processed_rows = processed_rows + ?, success_count = success_count + ?, failure_count = failure_count + ? WHERE id = ?`, processed, success, failure, jobID)
+	if err != nil {
+		logging.Errorf("updateProgress: job=%s err=%v", jobID, err)
+	}
 	return err
 }
 
@@ -82,7 +94,9 @@ func (s *ImportService) updateProgress(jobID string, processed, success, failure
 func (s *ImportService) ProcessFile(jobID string, path string) error {
 	// mark started
 	now := time.Now().UTC().Format(time.RFC3339)
+	logging.Debugf("ProcessFile[%s]: marking started_at=%s", jobID, now)
 	if _, err := s.db.Exec(`UPDATE import_jobs SET status='processing', started_at = ? WHERE id = ?`, now, jobID); err != nil {
+		logging.Errorf("ProcessFile[%s]: update started failed: %v", jobID, err)
 		return err
 	}
 
@@ -106,8 +120,18 @@ func (s *ImportService) ProcessFile(jobID string, path string) error {
 	rowNum := 1
 	var success, failure, processed int
 
-	tx, _ := s.db.Begin()
-	stmt, _ := tx.Prepare(`INSERT INTO promotion_codes(id,code,discount_type,discount_value,expires_at,max_uses,created_at) VALUES(?,?,?,?,?,?,?)`)
+	logging.Debugf("ProcessFile[%s]: begin transaction", jobID)
+	tx, err := s.db.Begin()
+	if err != nil {
+		logging.Errorf("ProcessFile[%s]: begin tx failed: %v", jobID, err)
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO promotion_codes(id,code,discount_type,discount_value,expires_at,max_uses,created_at) VALUES(?,?,?,?,?,?,?)`)
+	if err != nil {
+		logging.Errorf("ProcessFile[%s]: prepare stmt failed: %v", jobID, err)
+		tx.Rollback()
+		return err
+	}
 	defer stmt.Close()
 
 	for {
@@ -157,7 +181,9 @@ func (s *ImportService) ProcessFile(jobID string, path string) error {
 
 		if len(batch) >= batchSize {
 			// flush
+			logging.Debugf("ProcessFile[%s]: flushing batch size=%d", jobID, len(batch))
 			if err := s.flushBatch(tx, stmt, batch, jobID, &success, &failure); err != nil {
+				logging.Errorf("ProcessFile[%s]: flushBatch failed: %v", jobID, err)
 				tx.Rollback()
 				return err
 			}
@@ -166,19 +192,38 @@ func (s *ImportService) ProcessFile(jobID string, path string) error {
 		if processed%1000 == 0 {
 			_ = s.updateProgress(jobID, 1000, success, failure)
 			// commit intermediate
-			tx.Commit()
-			tx, _ = s.db.Begin()
-			stmt, _ = tx.Prepare(`INSERT INTO promotion_codes(id,code,discount_type,discount_value,expires_at,max_uses,created_at) VALUES(?,?,?,?,?,?,?)`)
+			logging.Debugf("ProcessFile[%s]: committing intermediate tx", jobID)
+			if err := tx.Commit(); err != nil {
+				logging.Errorf("ProcessFile[%s]: commit failed: %v", jobID, err)
+				return err
+			}
+			tx, err = s.db.Begin()
+			if err != nil {
+				logging.Errorf("ProcessFile[%s]: begin tx failed after commit: %v", jobID, err)
+				return err
+			}
+			stmt, err = tx.Prepare(`INSERT INTO promotion_codes(id,code,discount_type,discount_value,expires_at,max_uses,created_at) VALUES(?,?,?,?,?,?,?)`)
+			if err != nil {
+				logging.Errorf("ProcessFile[%s]: prepare failed after commit: %v", jobID, err)
+				tx.Rollback()
+				return err
+			}
 		}
 	}
 
 	if len(batch) > 0 {
+		logging.Debugf("ProcessFile[%s]: final flush batch size=%d", jobID, len(batch))
 		if err := s.flushBatch(tx, stmt, batch, jobID, &success, &failure); err != nil {
+			logging.Errorf("ProcessFile[%s]: final flush failed: %v", jobID, err)
 			tx.Rollback()
 			return err
 		}
 	}
-	tx.Commit()
+	logging.Debugf("ProcessFile[%s]: committing final tx", jobID)
+	if err := tx.Commit(); err != nil {
+		logging.Errorf("ProcessFile[%s]: final commit failed: %v", jobID, err)
+		return err
+	}
 
 	// final update
 	// update totals
@@ -190,11 +235,13 @@ func (s *ImportService) ProcessFile(jobID string, path string) error {
 		status = "failed"
 	}
 	completed := time.Now().UTC().Format(time.RFC3339)
+	logging.Debugf("ProcessFile[%s]: updating final status=%s total_rows=%d", jobID, status, processed)
 	_, err = s.db.Exec(`UPDATE import_jobs SET status = ?, total_rows = ?, completed_at = ? WHERE id = ?`, status, processed, completed, jobID)
 	if err != nil {
+		logging.Errorf("ProcessFile[%s]: update final status failed: %v", jobID, err)
 		return err
 	}
-	log.Printf("job %s done: processed=%d success=%d failure=%d", jobID, processed, success, failure)
+	logging.Debugf("job %s done: processed=%d success=%d failure=%d", jobID, processed, success, failure)
 	return nil
 }
 
@@ -205,13 +252,15 @@ func (s *ImportService) flushBatch(tx *sql.Tx, stmt *sql.Stmt, batch [][]interfa
 			// record error and continue
 			if sqliteErr := parseSQLiteError(err); sqliteErr != nil {
 				_ = s.recordError(jobID, 0, fmt.Sprint(row), sqliteErr.Error())
+				logging.Warnf("flushBatch: constraint error job=%s row=%v err=%v", jobID, row, sqliteErr)
 			} else {
 				_ = s.recordError(jobID, 0, fmt.Sprint(row), err.Error())
+				logging.Errorf("flushBatch: insert failed job=%s row=%v err=%v", jobID, row, err)
 			}
-			*failure++
+			(*failure)++
 			continue
 		}
-		*success++
+		(*success)++
 	}
 	return nil
 }

@@ -1,0 +1,160 @@
+{
+  "info": {
+    "name": "Coupon Import API",
+    "_postman_id": "coupon-import-api",
+    "description": "Collection for Coupon Import API (local)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:9090/api/v1",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "POST /imports (Upload CSV)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "<path/to/file.csv>",
+              "description": "CSV file (field name: file)"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/imports",
+          "host": ["{{baseUrl}}"],
+          "path": ["imports"]
+        },
+        "description": "Upload a CSV file using multipart/form-data (field name `file`). Response: 202 with import_job_id"
+      }
+    },
+    {
+      "name": "GET /imports (List jobs)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/imports?page=1&limit=20&status=",
+          "host": ["{{baseUrl}}"],
+          "path": ["imports"],
+          "query": [
+            { "key": "page", "value": "1" },
+            { "key": "limit", "value": "20" },
+            { "key": "status", "value": "" }
+          ]
+        },
+        "description": "Paginated list of import jobs"
+      }
+    },
+    {
+      "name": "GET /imports/:id (Job status)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/imports/{{import_id}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["imports", "{{import_id}}"],
+          "variable": [ { "key": "import_id", "value": "<job-id>" } ]
+        },
+        "description": "Get status for an import job. Replace `{{import_id}}` with the job id."
+      }
+    },
+    {
+      "name": "GET /imports/:id/errors (List errors)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/imports/{{import_id}}/errors?format=json&page=1&limit=100",
+          "host": ["{{baseUrl}}"],
+          "path": ["imports", "{{import_id}}", "errors"],
+          "query": [
+            { "key": "format", "value": "json" },
+            { "key": "page", "value": "1" },
+            { "key": "limit", "value": "100" }
+          ],
+          "variable": [ { "key": "import_id", "value": "<job-id>" } ]
+        },
+        "description": "List failed records for an import. Query params: format=json|csv, page, limit"
+      }
+    },
+    {
+      "name": "POST /imports/:id/retry (Retry failed)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/imports/{{import_id}}/retry",
+          "host": ["{{baseUrl}}"],
+          "path": ["imports", "{{import_id}}", "retry"],
+          "variable": [ { "key": "import_id", "value": "<job-id>" } ]
+        },
+        "description": "Create a retry job for failed records from the original job. No request body. Returns 202 with new import_job_id"
+      }
+    },
+    {
+      "name": "GET /codes/{code}/validate",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/codes/{{code}}/validate?cart_total=100",
+          "host": ["{{baseUrl}}"],
+          "path": ["codes", "{{code}}", "validate"],
+          "query": [ { "key": "cart_total", "value": "100" } ],
+          "variable": [ { "key": "code", "value": "<coupon-code>" } ]
+        },
+        "description": "Validate a coupon for a cart. Replace `{{code}}` and set `cart_total` query param."
+      }
+    },
+    {
+      "name": "POST /codes/{code}/apply",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"order_id\": \"order_123\",\n  \"user_id\": \"user_456\",\n  \"cart_total\": 150.5,\n  \"discount_applied\": 10\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/codes/{{code}}/apply",
+          "host": ["{{baseUrl}}"],
+          "path": ["codes", "{{code}}", "apply"],
+          "variable": [ { "key": "code", "value": "<coupon-code>" } ]
+        },
+        "description": "Record coupon usage. JSON body: order_id, user_id, cart_total, discount_applied"
+      }
+    },
+    {
+      "name": "GET /codes/analytics",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/codes/analytics?start_date=2026-01-01&end_date=2026-01-31&group_by=day",
+          "host": ["{{baseUrl}}"],
+          "path": ["codes", "analytics"],
+          "query": [
+            { "key": "start_date", "value": "2026-01-01" },
+            { "key": "end_date", "value": "2026-01-31" },
+            { "key": "group_by", "value": "day" }
+          ]
+        },
+        "description": "Coupon analytics. Query params: start_date, end_date, group_by"
+      }
+    }
+  ]
+}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"coupon-import/internal/logging"
 	"coupon-import/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -31,17 +32,21 @@ func (h *ImportHandler) CreateImport(c *gin.Context) {
 	}
 	tmpDir := os.TempDir()
 	dst := filepath.Join(tmpDir, file.Filename)
+	logging.Debugf("CreateImport: saving uploaded file to %s", dst)
 	if err := c.SaveUploadedFile(file, dst); err != nil {
+		logging.Errorf("CreateImport: save failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": gin.H{"code": "SAVE_FAILED", "message": "failed to save file"}})
 		return
 	}
 	job, err := h.svc.CreateJob(file.Filename)
 	if err != nil {
+		logging.Errorf("CreateImport: create job failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": gin.H{"code": "JOB_CREATE_FAILED", "message": err.Error()}})
 		return
 	}
 
 	// start background processing
+	logging.Debugf("CreateImport: starting background processing job=%s path=%s", job.ID, dst)
 	go func(id, path string) {
 		_ = h.svc.ProcessFile(id, path)
 	}(job.ID, dst)
@@ -50,6 +55,7 @@ func (h *ImportHandler) CreateImport(c *gin.Context) {
 }
 
 func (h *ImportHandler) GetImport(c *gin.Context) {
+
 	id := c.Param("id")
 	job, err := h.svc.GetJob(id)
 	if err != nil {

@@ -2,13 +2,13 @@ package main
 
 import (
 	"database/sql"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 
 	"coupon-import/internal/handler"
+	"coupon-import/internal/logging"
 	"coupon-import/internal/service"
 
 	"github.com/gin-contrib/cors"
@@ -17,6 +17,9 @@ import (
 )
 
 func main() {
+	// init logger (default to debug)
+	logging.Init("debug")
+
 	// Choose service implementation based on env
 	var svc service.ImportServiceInterface
 	if os.Getenv("USE_DB") == "1" {
@@ -26,16 +29,16 @@ func main() {
 		}
 		db, err := sql.Open("sqlite", dbPath)
 		if err != nil {
-			log.Fatalf("open db: %v", err)
+			logging.Fatalf("open db: %v", err)
 		}
 		// run migrations
 		migrPath := filepath.Join("migrations", "001_init.sql")
 		if b, err := os.ReadFile(migrPath); err == nil {
 			if _, err := db.Exec(string(b)); err != nil {
-				log.Printf("migration exec warning: %v", err)
+				logging.Warnf("migration exec warning: %v", err)
 			}
 		} else {
-			log.Printf("migration file not found: %v", err)
+			logging.Warnf("migration file not found: %v", err)
 		}
 		svc = service.NewImportService(db)
 	} else {
@@ -77,8 +80,8 @@ func main() {
 		port = "9090"
 	}
 	addr := ":" + port
-	log.Printf("listening %s", addr)
+	logging.Infof("listening %s", addr)
 	if err := r.Run(addr); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("server: %v", err)
+		logging.Fatalf("server: %v", err)
 	}
 }
