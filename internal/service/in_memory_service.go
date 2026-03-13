@@ -134,8 +134,9 @@ func (s *InMemoryImportService) ProcessFile(jobID string, path string) error {
 		// uniqueness
 		s.mu.Lock()
 		if _, exists := s.codes[code]; exists {
-			s.recordError(jobID, rowNum, strings.Join(rec, ","), "duplicate code")
 			s.mu.Unlock()
+			s.recordError(jobID, rowNum, strings.Join(rec, ","), "duplicate code")
+
 			failure++
 			continue
 		}
